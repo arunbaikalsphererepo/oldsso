@@ -190,6 +190,44 @@ router.post("/provision-organization", async (req, res) => {
   }
 });
 
+// ── POST /api/internal/sync-user-password ───
+// Updates password hash for a user by email. Called by AR when a hotel
+// user changes their password so both systems stay in sync.
+
+const syncPasswordSchema = z.object({
+  email: z.string().email().max(320),
+  passwordHash: z.string().min(1),
+});
+
+router.post("/sync-user-password", async (req, res) => {
+  try {
+    const body = syncPasswordSchema.safeParse(req.body);
+    if (!body.success) {
+      res.status(400).json({ error: "Validation failed", details: body.error.flatten().fieldErrors });
+      return;
+    }
+
+    const { email, passwordHash } = body.data;
+
+    const result = await query(
+      `UPDATE users SET password_hash = $1, failed_login_attempts = 0, locked_until = NULL, updated_at = now()
+       WHERE email = $2
+       RETURNING id`,
+      [passwordHash, email.toLowerCase()]
+    );
+
+    if (result!.rows.length === 0) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Sync password error:", err);
+    res.status(500).json({ error: "Failed to sync password" });
+  }
+});
+
 // ── GET /api/internal/organization-by-ar-id/:arOrgId ───
 // Lookup a Baikalsphere organization by AR organization ID
 router.get("/organization-by-ar-id/:arOrgId", async (req, res) => {
